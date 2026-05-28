@@ -4,8 +4,11 @@
 <div align="center">
 
 ![NPM Version](https://img.shields.io/npm/v/sigscan-ts?style=for-the-badge&label=NPM)
+![NPM Downloads](https://img.shields.io/npm/dm/sigscan-ts?style=for-the-badge&label=Downloads)
 ![GitHub License](https://img.shields.io/github/license/K4ryuu/sigscan-ts?style=for-the-badge)
+![GitHub Issues](https://img.shields.io/github/issues/K4ryuu/sigscan-ts?style=for-the-badge)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
+![Bundle Size](https://img.shields.io/bundlephobia/minzip/sigscan-ts?style=for-the-badge&label=Bundle%20Size)
 
 </div>
 

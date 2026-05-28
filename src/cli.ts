@@ -3,7 +3,7 @@
 import { readFileSync, existsSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { BinaryAnalyzer } from "./index.js";
+import { PatternScanner } from "./index.js";
 
 function getPackageVersion(): string {
   try {
@@ -27,18 +27,16 @@ function printHelp() {
 
 \x1b[1mUsage:\x1b[0m
   sigscan-ts --binary <file> --pattern "<signature>"
-  sigscan-ts --binary <file> --string "<literal>" [options]
   sigscan-ts -b <file1> -b <file2> -g <gamedata.json> [options]
 
 \x1b[1mOptions:\x1b[0m
   -b, --binary <path>    Path to file or directory (can specify multiple times, e.g. -b file1 -b file2)
   -p, --pattern <sig>    IDA, x64dbg, or Cheat Engine style byte pattern to scan for
-  -s, --string <str>     String literal to search references for and auto-generate a signature
   -g, --gamedata <file>  Path to a gamedata JSON file to batch-verify signatures
+  --fast                 Stop pattern scans after confirming a second match
   --platform <type>      Target platform: "linux" or "windows" (automatically detected by default)
   -l, --limit <num>      Max matches to find (default: 0 = unlimited)
   -o, --offset <num>     Byte offset to start scanning from (default: 0)
-  --sig-len <num>        Length of signature to extract when using --string (default: 24)
   -v, --version          Show version number
   -h, --help             Show this help menu
 
@@ -55,12 +53,11 @@ function parseArgs() {
   const options: {
     binaries: string[];
     pattern?: string;
-    string?: string;
     gamedata?: string;
+    fast?: boolean;
     platform?: string;
     limit?: string;
     offset?: string;
-    sigLen?: string;
   } = { binaries: [] };
 
   for (let i = 0; i < args.length; i++) {
@@ -74,13 +71,16 @@ function parseArgs() {
       process.exit(0);
     }
 
+    if (arg === "--fast") {
+      options.fast = true;
+      continue;
+    }
+
     if (arg === "-b" || arg === "--binary") {
       const val = args[++i];
       if (val) options.binaries.push(val);
     } else if (arg === "-p" || arg === "--pattern") {
       options.pattern = args[++i] || "";
-    } else if (arg === "-s" || arg === "--string") {
-      options.string = args[++i] || "";
     } else if (arg === "-g" || arg === "--gamedata") {
       options.gamedata = args[++i] || "";
     } else if (arg === "--platform") {
@@ -89,12 +89,29 @@ function parseArgs() {
       options.limit = args[++i] || "";
     } else if (arg === "-o" || arg === "--offset") {
       options.offset = args[++i] || "";
-    } else if (arg === "--sig-len") {
-      options.sigLen = args[++i] || "";
     }
   }
 
   return options;
+}
+
+function parsePositiveInt(value: string | undefined, label: string, defaultValue: number): number {
+  if (!value) return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+    console.error(`\x1b[31mError: Invalid ${label}: ${value}\x1b[0m`);
+    process.exit(1);
+  }
+  return parsed;
+}
+
+function parsePlatform(value: string): "linux" | "windows" {
+  const platform = value.toLowerCase();
+  if (platform === "linux" || platform === "windows") {
+    return platform;
+  }
+  console.error(`\x1b[31mError: Invalid --platform value: ${value}. Use "linux" or "windows".\x1b[0m`);
+  process.exit(1);
 }
 
 function main() {
@@ -113,18 +130,17 @@ function main() {
     }
   }
 
-  if (!options.pattern && !options.string && !options.gamedata) {
-    console.error("\x1b[31mError: Must specify either --pattern <sig>, --string <str>, or --gamedata <file>.\x1b[0m");
+  if (!options.pattern && !options.gamedata) {
+    console.error("\x1b[31mError: Must specify either --pattern <sig> or --gamedata <file>.\x1b[0m");
     printHelp();
     process.exit(1);
   }
 
-  // Mode 1: Pattern Scan & Mode 2: Auto-Generate Signature from String Reference
-  if (options.pattern || options.string) {
+  if (options.pattern) {
     for (const bin of options.binaries) {
       const isDirectory = statSync(bin).isDirectory();
       if (isDirectory) {
-        console.error(`\x1b[31mError: --binary must be a file when scanning patterns or strings: ${bin}\x1b[0m`);
+        console.error(`\x1b[31mError: --binary must be a file when scanning patterns: ${bin}\x1b[0m`);
         process.exit(1);
       }
 
@@ -139,50 +155,25 @@ function main() {
         process.exit(1);
       }
       console.log(`Loaded binary (${(buffer.length / 1024 / 1024).toFixed(2)} MB) in ${(performance.now() - start).toFixed(2)}ms`);
-      const analyzer = new BinaryAnalyzer(buffer);
+      const scanner = new PatternScanner(buffer);
+      const limit = parsePositiveInt(options.limit, "--limit", 0);
+      const startOffset = parsePositiveInt(options.offset, "--offset", 0);
 
-      // Mode 1: Pattern Scan
-      if (options.pattern) {
-        const limit = options.limit ? parseInt(options.limit, 10) : 0;
-        const startOffset = options.offset ? parseInt(options.offset, 10) : 0;
+      console.log(`Scanning [${bin}] for pattern: "${options.pattern}"${options.fast ? " [fast]" : ""}...`);
+      const scanStart = performance.now();
+      const result = scanner.scan(options.pattern, options.fast ? { limit, startOffset, fast: true } : { limit, startOffset });
+      const duration = performance.now() - scanStart;
 
-        console.log(`Scanning [${bin}] for pattern: "${options.pattern}"...`);
-        const scanStart = performance.now();
-        const result = analyzer.scan(options.pattern, { limit, startOffset });
-        const duration = performance.now() - scanStart;
-
-        console.log(`Scan completed in ${duration.toFixed(2)}ms`);
-        if (result.found) {
-          console.log(`\n\x1b[32mFOUND ${result.offsets.length} MATCHES in [${bin}]:\x1b[0m`);
-          result.offsets.forEach((offset, idx) => {
-            console.log(`  Match #${idx + 1}: Offset \x1b[36m0x${offset.toString(16)}\x1b[0m (${offset})`);
-          });
-          console.log(`Reliable (unique): ${result.reliable ? "\x1b[32mYes\x1b[0m" : "\x1b[33mNo (multiple/none)\x1b[0m"}`);
-        } else {
-          console.log(`\n\x1b[31mPATTERN NOT FOUND in [${bin}]\x1b[0m`);
-        }
-      }
-
-      // Mode 2: Auto-Generate Signature from String Reference
-      if (options.string) {
-        const sigLen = options.sigLen ? parseInt(options.sigLen, 10) : 24;
-        console.log(`Analyzing string references for literal "${options.string}" in [${bin}]...`);
-
-        const sigResult = analyzer.generateSignatureFromString(options.string, sigLen);
-        if (sigResult) {
-          console.log(`\n\x1b[32mSUCCESSFULLY GENERATED SIGNATURE for [${bin}]:\x1b[0m`);
-          console.log(`  String:                 "${options.string}"`);
-          console.log(`  Function Start Offset:  \x1b[36m0x${sigResult.offset.toString(16)}\x1b[0m (${sigResult.offset})`);
-          console.log(`  Generated IDA Pattern:  \x1b[35m${sigResult.signature}\x1b[0m`);
-
-          // Verify the signature automatically
-          const verify = analyzer.scan(sigResult.signature);
-          console.log(
-            `  Verification scan:      ${verify.found ? "\x1b[32mFOUND\x1b[0m" : "\x1b[31mFAILED\x1b[0m"} (matches: ${verify.offsets.length}, reliable: ${verify.reliable})`
-          );
-        } else {
-          console.log(`\n\x1b[31mFAILED: Could not find references or function prologues for string "${options.string}" in [${bin}].\x1b[0m`);
-        }
+      console.log(`Scan completed in ${duration.toFixed(2)}ms`);
+      if (result.found) {
+        const matchesLabel = options.fast && result.offsets.length >= 2 ? "2+" : String(result.offsets.length);
+        console.log(`\n\x1b[32mFOUND ${matchesLabel} MATCHES in [${bin}]:\x1b[0m`);
+        result.offsets.forEach((offset, idx) => {
+          console.log(`  Match #${idx + 1}: Offset \x1b[36m0x${offset.toString(16)}\x1b[0m (${offset})`);
+        });
+        console.log(`Reliable (unique): ${result.reliable ? "\x1b[32mYes\x1b[0m" : "\x1b[33mNo (multiple/none)\x1b[0m"}`);
+      } else {
+        console.log(`\n\x1b[31mPATTERN NOT FOUND in [${bin}]\x1b[0m`);
       }
     }
   }
@@ -213,7 +204,7 @@ function main() {
     // Determine platforms to verify
     const platforms: ("linux" | "windows")[] = [];
     if (options.platform) {
-      platforms.push(options.platform.toLowerCase() as "linux" | "windows");
+      platforms.push(parsePlatform(options.platform));
     } else {
       // Auto-detect based on provided binaries
       for (const bin of options.binaries) {
@@ -240,7 +231,7 @@ function main() {
     }
 
     const uniquePlatforms = Array.from(new Set(platforms));
-    const loadedBinaries = new Map<string, BinaryAnalyzer>();
+    const loadedBinaries = new Map<string, PatternScanner>();
 
     let passedTotal = 0;
     let warningsTotal = 0;
@@ -336,12 +327,12 @@ function main() {
           continue;
         }
 
-        // 3. Load/Get the BinaryAnalyzer for this library on-demand
+        // 3. Load/Get the PatternScanner for this library on-demand
         let currentAnalyzer = loadedBinaries.get(binaryFilePath);
         if (!currentAnalyzer) {
           try {
             const fileBuf = readFileSync(binaryFilePath);
-            currentAnalyzer = new BinaryAnalyzer(fileBuf);
+            currentAnalyzer = new PatternScanner(fileBuf);
             loadedBinaries.set(binaryFilePath, currentAnalyzer);
           } catch (err) {
             results[platform] = { status: "ERR", detail: "LOAD FAILED" };

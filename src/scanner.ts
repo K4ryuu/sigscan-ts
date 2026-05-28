@@ -21,9 +21,7 @@ export class PatternScanner {
     // If we are in Node.js/Bun, wrap any Uint8Array as a Buffer instantly.
     // This allows us to use native C++ speed for buffer searches (indexOf) with zero overhead.
     if (typeof Buffer !== "undefined") {
-      this.data = Buffer.isBuffer(data)
-        ? data
-        : Buffer.from(data.buffer || data, (data as any).byteOffset || 0, (data as any).byteLength || data.length);
+      this.data = Buffer.isBuffer(data) ? data : Buffer.from(data.buffer || data, (data as any).byteOffset || 0, (data as any).byteLength || data.length);
       this.isBuffer = true;
     } else {
       this.data = data;
@@ -45,7 +43,7 @@ export class PatternScanner {
     const parsed = typeof pattern === "string" ? parsePattern(pattern) : pattern;
     if (parsed.length === 0) return [];
 
-    const limit = options.limit ?? 0;
+    const limit = options.fast ? 2 : (options.limit ?? 0);
     const startOffset = Math.max(0, options.startOffset ?? 0);
     const dataLength = this.data.length;
     const patternLength = parsed.length;
@@ -62,7 +60,7 @@ export class PatternScanner {
     // handle the search. This runs at compiled hardware speed.
     if (!hasWildcard) {
       const targetBytes = new Uint8Array(parsed as number[]);
-      
+
       if (this.isBuffer) {
         const buf = this.data as Buffer;
         const targetBuf = Buffer.from(targetBytes.buffer, targetBytes.byteOffset, targetBytes.byteLength);
@@ -219,11 +217,14 @@ export class PatternScanner {
    * @returns Detailed ScanResult object.
    */
   scan(pattern: string | PatternByte[], options: ScanOptions = {}): ScanResult {
-    const offsets = this.findPattern(pattern, options);
+    const requestedLimit = options.limit ?? 0;
+    const probeLimit = options.fast ? 2 : requestedLimit > 0 ? Math.max(requestedLimit, 2) : 0;
+    const probeOffsets = this.findPattern(pattern, options.fast ? { ...options, limit: probeLimit, fast: true } : { ...options, limit: probeLimit });
+    const offsets = requestedLimit > 0 ? probeOffsets.slice(0, requestedLimit) : probeOffsets;
     return {
       found: offsets.length > 0,
       offsets,
-      reliable: offsets.length === 1,
+      reliable: probeOffsets.length === 1
     };
   }
 }
@@ -235,11 +236,7 @@ export class PatternScanner {
  * @param pattern Signature string or pre-parsed array.
  * @param options Scan options.
  */
-export function scan(
-  data: Uint8Array | Buffer,
-  pattern: string | PatternByte[],
-  options: ScanOptions = {}
-): ScanResult {
+export function scan(data: Uint8Array | Buffer, pattern: string | PatternByte[], options: ScanOptions = {}): ScanResult {
   const scanner = new PatternScanner(data);
   return scanner.scan(pattern, options);
 }

@@ -2,7 +2,7 @@
   "name": "sigscan-ts",
   "version": "1.0.0",
   "type": "module",
-  "description": "Ultra-fast, zero-dependency binary signature and byte pattern scanner for Node.js and Bun",
+  "description": "Ultra-fast, zero-dependency binary signature scanner for Node.js and Bun",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",

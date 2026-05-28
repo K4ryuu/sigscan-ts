@@ -8,6 +8,12 @@ export interface ScanOptions {
    */
   limit?: number;
   /**
+   * Stop once a second match is confirmed instead of counting all matches.
+   * Useful when you only need to know whether a pattern is unique.
+   * @default false
+   */
+  fast?: boolean;
+  /**
    * The byte offset in the buffer to start searching from.
    * @default 0
    */
@@ -27,26 +33,4 @@ export interface ScanResult {
    * True if exactly one match was found. Useful for verifying signature uniqueness.
    */
   reliable: boolean;
-}
-
-export interface StringDumpEntry {
-  /**
-   * The byte offset of the string inside the binary file.
-   */
-  offset: number;
-  /**
-   * The text representation of the string.
-   */
-  text: string;
-}
-
-export interface StringReference {
-  /**
-   * Estimated byte offset where the x64 instruction starts (e.g. LEA instruction).
-   */
-  instructionOffset: number;
-  /**
-   * Byte offset of the 4-byte displacement/offset value inside the instruction.
-   */
-  displacementOffset: number;
 }

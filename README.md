@@ -14,7 +14,7 @@
 <div align="center">
   <h1 align="center">sigscan-ts</h1>
   <p align="center">
-    High-performance binary signature scanner and reverse-engineering toolkit
+    High-performance binary signature scanner and gamedata verifier
     <br />
     <strong>Zero runtime dependencies • Hybrid Buffer.indexOf prefix optimization • Fully Type-Safe • Auto relocatable signatures</strong>
     <br />
@@ -29,15 +29,14 @@
 
 Hey! I built this because I was working on a few game server modding tools and got tired of copy-pasting raw C++ signature scanning algorithms or relying on slow, outdated JavaScript libraries.
 
-This is a modern, high-performance binary scanner and reverse-engineering toolkit. It runs on Node.js, Bun, and the browser, with no runtime dependencies whatsoever.
+This is a modern, high-performance binary signature scanner. It runs on Node.js and Bun with no runtime dependencies whatsoever.
 
 ## Why this package is special
 
 - **Zero runtime dependencies** - All dependencies are strictly for development and compilation. Check the `package.json` for yourself.
 - **Hybrid search engine** - Rather than scanning byte-by-byte, it parses your signature to find the longest continuous prefix, performs a native C++ `indexOf` search, and then verifies wildcards around candidates. This makes it 10-50x faster than standard JS loop-based scanners.
-- **Relocatable Auto-Signature Generator** - Provide any string literal (like `"Host_Say"`), and it will automatically trace RIP-relative references, scan backwards to locate the containing function prologue, and generate an IDA-style signature with dynamic displacement bytes automatically wild-carded (`?? ?? ?? ??`).
 - **Extremely forgiving parser** - Copy signatures directly from Cheat Engine, IDA Pro, x64dbg, or C-style arrays (`{ 0x48, 0x8b, 0xc4, ?? }`). It handles spaces, dots, commas, raw hex strings, and escaped sequences out of the box.
-- **Built-in CLI & Gamedata Verifier** - Scan single signatures, generate signatures from string references, or batch-verify entire `gamedata.json` files (supporting both CounterStrikeSharp and SwiftlyS2 formats) against server binaries in seconds.
+- **Built-in CLI & Gamedata Verifier** - Scan single signatures or batch-verify entire `gamedata.json` files (supporting both CounterStrikeSharp and SwiftlyS2 formats) against server binaries in seconds.
 
 ## Installation
 
@@ -75,32 +74,6 @@ console.log("Offsets found:", offsets);
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Advanced String & Signature Tracing
-
-You can use the `BinaryAnalyzer` class for more static analysis and reverse engineering tasks:
-
-```typescript
-import { readFileSync } from "fs";
-import { BinaryAnalyzer } from "sigscan-ts";
-
-const analyzer = new BinaryAnalyzer(readFileSync("server.dll"));
-
-// 1. Dump printable strings (like Unix `strings` command)
-const strings = analyzer.dumpStrings({ minLength: 8 });
-
-// 2. Auto-generate relocatable function signature
-// This traces the string pointer, finds the containing function,
-// and replaces dynamic displacement offsets with wildcards.
-const sigResult = analyzer.generateSignatureFromString("Host_Say", 24);
-if (sigResult) {
-  console.log(`Function offset: 0x${sigResult.offset.toString(16)}`);
-  console.log(`Relocatable IDA Pattern: ${sigResult.signature}`);
-  // -> 55 48 89 E5 48 8D 3D ?? ?? ?? ?? ...
-}
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
 ## Command Line Interface (CLI)
 
 If you install the package globally or run it via npx, you can use the built-in CLI:
@@ -109,8 +82,8 @@ If you install the package globally or run it via npx, you can use the built-in 
 # Scan a binary for a specific signature
 sigscan-ts -b libserver.so -p "48 8B C4 ?? 53"
 
-# Auto-generate a relocatable signature for a string
-sigscan-ts -b server.dll -s "Host_Say" --sig-len 32
+# Fast pattern scan that stops after proving a second match
+sigscan-ts -b libserver.so -p "48 8B C4 ?? 53" --fast
 
 # Verify an entire gamedata.json file against binaries
 # (Supports folder paths or passing multiple files via multiple -b flags.

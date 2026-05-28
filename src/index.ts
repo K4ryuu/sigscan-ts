@@ -1,20 +1,5 @@
-export type {
-  PatternByte,
-  ScanOptions,
-  ScanResult,
-  StringDumpEntry,
-  StringReference
-} from "./types.js";
+export type { PatternByte, ScanOptions, ScanResult } from "./types.js";
 
-export {
-  parsePattern
-} from "./parser.js";
+export { parsePattern } from "./parser.js";
 
-export {
-  PatternScanner,
-  scan
-} from "./scanner.js";
-
-export {
-  BinaryAnalyzer
-} from "./analyzer.js";
+export { PatternScanner, scan } from "./scanner.js";

@@ -4,6 +4,7 @@ import { readFileSync, existsSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { PatternScanner } from "./index.js";
+import type { ScanResult } from "./index.js";
 
 function getPackageVersion(): string {
   try {
@@ -231,7 +232,6 @@ function main() {
     }
 
     const uniquePlatforms = Array.from(new Set(platforms));
-    const loadedBinaries = new Map<string, PatternScanner>();
 
     let passedTotal = 0;
     let warningsTotal = 0;
@@ -242,11 +242,17 @@ function main() {
     console.log(`Verifying signatures for platforms: \x1b[35m${uniquePlatforms.join(", ")}\x1b[0m`);
     console.log(`Found ${entries.length} entries. Starting scan...\n`);
 
-    for (const [name, entry] of entries) {
-      const results: Record<string, { status: "OK" | "WARN" | "FAIL" | "SKIP" | "ERR"; detail: string }> = {};
+    type EntryStatus = { status: "OK" | "WARN" | "FAIL" | "SKIP" | "ERR"; detail: string };
 
+    // pass 1: resolve all (name, platform) → binary path + pattern, or skip reason
+    type Resolved = { name: string; platform: string; binaryPath: string; pattern: string; library: string };
+    type Skipped  = { name: string; platform: string; status: "SKIP" | "ERR"; detail: string };
+
+    const resolved: Resolved[] = [];
+    const skippedEntries: Skipped[] = [];
+
+    for (const [name, entry] of entries) {
       for (const platform of uniquePlatforms) {
-        // 1. Resolve library name and signature pattern
         let library = "server";
         let sigPattern: string | null = null;
         let hasOffset = false;
@@ -258,103 +264,90 @@ function main() {
         } else if (entry.lib || (entry.windows && entry.linux)) {
           library = entry.lib || "server";
           const val = entry[platform];
-          if (typeof val === "string") {
-            sigPattern = val;
-          } else if (typeof val === "number") {
-            hasOffset = true;
-          }
+          if (typeof val === "string") sigPattern = val;
+          else if (typeof val === "number") hasOffset = true;
         } else {
           const val = entry[platform];
-          if (typeof val === "string") {
-            sigPattern = val;
-          } else if (typeof val === "number") {
-            hasOffset = true;
-          }
+          if (typeof val === "string") sigPattern = val;
+          else if (typeof val === "number") hasOffset = true;
         }
 
-        // If no signature pattern was found, skip it
         if (!sigPattern) {
-          if (hasOffset) {
-            results[platform] = { status: "SKIP", detail: "OFFSET ONLY" };
-          } else {
-            results[platform] = { status: "SKIP", detail: "NO SIG" };
-          }
+          skippedEntries.push({ name, platform, status: "SKIP", detail: hasOffset ? "OFFSET ONLY" : "NO SIG" });
           continue;
         }
 
-        // 2. Resolve target binary file path
         const targetFileName = platform === "windows" ? `${library.toLowerCase()}.dll` : `lib${library.toLowerCase()}.so`;
-        let binaryFilePath: string | null = null;
+        let binaryPath: string | null = null;
 
-        // Try to match from provided binaries
         for (const bin of options.binaries) {
           const isDir = statSync(bin).isDirectory();
           if (isDir) {
             const fullPath = join(bin, targetFileName);
-            if (existsSync(fullPath)) {
-              binaryFilePath = fullPath;
-              break;
-            }
+            if (existsSync(fullPath)) { binaryPath = fullPath; break; }
           } else {
-            if (bin.toLowerCase().endsWith(targetFileName.toLowerCase())) {
-              binaryFilePath = bin;
-              break;
-            }
+            if (bin.toLowerCase().endsWith(targetFileName.toLowerCase())) { binaryPath = bin; break; }
             const parentPath = join(dirname(bin), targetFileName);
-            if (existsSync(parentPath)) {
-              binaryFilePath = parentPath;
-              break;
-            }
+            if (existsSync(parentPath)) { binaryPath = parentPath; break; }
           }
         }
 
-        // Fallback: If not resolved, check if any of the provided files matches this platform
-        if (!binaryFilePath) {
+        if (!binaryPath) {
           for (const bin of options.binaries) {
             if (!statSync(bin).isDirectory()) {
-              const isBinLinux = bin.toLowerCase().endsWith(".so") || !bin.toLowerCase().endsWith(".dll");
-              const binPlatform = isBinLinux ? "linux" : "windows";
-              if (binPlatform === platform) {
-                binaryFilePath = bin;
-                break;
-              }
+              const isLinux = bin.toLowerCase().endsWith(".so") || !bin.toLowerCase().endsWith(".dll");
+              if ((isLinux ? "linux" : "windows") === platform) { binaryPath = bin; break; }
             }
           }
         }
 
-        if (!binaryFilePath || !existsSync(binaryFilePath)) {
-          results[platform] = { status: "ERR", detail: "FILE NOT FOUND" };
+        if (!binaryPath || !existsSync(binaryPath)) {
+          skippedEntries.push({ name, platform, status: "ERR", detail: "FILE NOT FOUND" });
           continue;
         }
 
-        // 3. Load/Get the PatternScanner for this library on-demand
-        let currentAnalyzer = loadedBinaries.get(binaryFilePath);
-        if (!currentAnalyzer) {
-          try {
-            const fileBuf = readFileSync(binaryFilePath);
-            currentAnalyzer = new PatternScanner(fileBuf);
-            loadedBinaries.set(binaryFilePath, currentAnalyzer);
-          } catch (err) {
-            results[platform] = { status: "ERR", detail: "LOAD FAILED" };
-            continue;
-          }
-        }
+        resolved.push({ name, platform, binaryPath, pattern: sigPattern, library });
+      }
+    }
 
-        // 4. Scan
+    // pass 2: load each binary once, batch scanPatterns
+    const byBinary = new Map<string, { scanner: PatternScanner; patterns: Record<string, string> }>();
+    for (const r of resolved) {
+      if (!byBinary.has(r.binaryPath)) {
         try {
-          const result = currentAnalyzer.scan(sigPattern);
-          if (result.found) {
-            if (result.reliable) {
-              const offsetHex = `0x${result.offsets[0]!.toString(16).toUpperCase()}`;
-              results[platform] = { status: "OK", detail: offsetHex };
-            } else {
-              results[platform] = { status: "WARN", detail: `MULTIPLE (${result.offsets.length})` };
-            }
-          } else {
-            results[platform] = { status: "FAIL", detail: "NOT FOUND" };
-          }
-        } catch (err) {
-          results[platform] = { status: "ERR", detail: "SCAN ERROR" };
+          byBinary.set(r.binaryPath, { scanner: new PatternScanner(readFileSync(r.binaryPath)), patterns: {} });
+        } catch {
+          skippedEntries.push({ name: r.name, platform: r.platform, status: "ERR", detail: "LOAD FAILED" });
+          continue;
+        }
+      }
+      byBinary.get(r.binaryPath)!.patterns[`${r.name}::${r.platform}`] = r.pattern;
+    }
+
+    const scanResults = new Map<string, ScanResult>();
+    for (const { scanner, patterns } of byBinary.values()) {
+      for (const [key, result] of Object.entries(scanner.scanPatterns(patterns))) {
+        scanResults.set(key, result);
+      }
+    }
+
+    // pass 3: build display results and print
+    for (const [name, entry] of entries) {
+      const results: Record<string, EntryStatus> = {};
+
+      for (const platform of uniquePlatforms) {
+        const skip = skippedEntries.find(s => s.name === name && s.platform === platform);
+        if (skip) { results[platform] = { status: skip.status, detail: skip.detail }; continue; }
+
+        const r = scanResults.get(`${name}::${platform}`);
+        if (!r) { results[platform] = { status: "ERR", detail: "NO RESULT" }; continue; }
+
+        if (r.found) {
+          results[platform] = r.reliable
+            ? { status: "OK",   detail: `0x${r.offsets[0]!.toString(16).toUpperCase()}` }
+            : { status: "WARN", detail: `MULTIPLE (${r.offsets.length})` };
+        } else {
+          results[platform] = { status: "FAIL", detail: "NOT FOUND" };
         }
       }
 

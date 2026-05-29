@@ -177,9 +177,19 @@ export class PatternScanner {
       bestSeqOffset = currentSeqOffset;
     }
 
-    // solid run must be ≥3 bytes to be worth using as an indexOf anchor
-    if (bestSeqLength >= 3 && bestSeqOffset !== -1) {
+    // even a 1-byte anchor cuts search space by ~256x vs full linear scan
+    if (bestSeqLength >= 1 && bestSeqOffset !== -1) {
       const seqBytes = new Uint8Array(parsed.slice(bestSeqOffset, bestSeqOffset + bestSeqLength) as number[]);
+
+      // secondary filter: first non-null byte outside the anchor run
+      // cuts false positives by another ~256x before the full verification loop
+      let filterOffset = -1;
+      let filterByte = 0;
+      for (let i = 0; i < patternLength; i++) {
+        if (i >= bestSeqOffset && i < bestSeqOffset + bestSeqLength) continue;
+        if (parsed[i] !== null) { filterOffset = i; filterByte = parsed[i] as number; break; }
+      }
+
       let offset = startOffset;
 
       if (this.isBuffer) {
@@ -192,6 +202,11 @@ export class PatternScanner {
           if (found === -1 || found - bestSeqOffset > dataLength - patternLength) break;
 
           const candidateStart = found - bestSeqOffset;
+
+          if (filterOffset !== -1 && this.data[candidateStart + filterOffset] !== filterByte) {
+            offset = candidateStart + 1;
+            continue;
+          }
 
           let match = true;
           for (let j = 0; j < patternLength; j++) {
@@ -221,6 +236,11 @@ export class PatternScanner {
           }
 
           if (matchSeq) {
+            if (filterOffset !== -1 && this.data[offset + filterOffset] !== filterByte) {
+              offset++;
+              continue;
+            }
+
             let match = true;
             for (let j = 0; j < patternLength; j++) {
               const patternByte = parsed[j];

@@ -37,9 +37,25 @@ This is a modern, high-performance binary signature scanner. It runs on Node.js 
 ## Why this package is special
 
 - **Zero runtime dependencies** - All dependencies are strictly for development and compilation. Check the `package.json` for yourself.
-- **Hybrid search engine** - Rather than scanning byte-by-byte, it parses your signature to find the longest continuous prefix, performs a native C++ `indexOf` search, and then verifies wildcards around candidates. This makes it 10-50x faster than standard JS loop-based scanners.
+- **Hybrid search engine** - Rather than scanning byte-by-byte, it parses your signature to find the longest continuous prefix, performs a native C++ `indexOf` search, and then verifies wildcards around candidates. See the benchmark table below.
 - **Extremely forgiving parser** - Copy signatures directly from Cheat Engine, IDA Pro, x64dbg, or C-style arrays (`{ 0x48, 0x8b, 0xc4, ?? }`). It handles spaces, dots, commas, raw hex strings, and escaped sequences out of the box.
 - **Built-in CLI & Gamedata Verifier** - Scan single signatures or batch-verify entire `gamedata.json` files (supporting both CounterStrikeSharp and SwiftlyS2 formats) against server binaries in seconds.
+
+## Performance
+
+Benchmarked on a 100 MB random buffer with 3 planted signatures (Apple M2 Pro, Bun 1.3).
+
+| Pattern type | Example | Time | vs naive loop |
+|---|---|---|---|
+| No wildcards | `DE AD BE EF CA FE BA BE` | ~8.5 ms | **~15x faster** |
+| Wildcards (prefix-opt) | `DE AD ?? EF CA ?? BA BE` | ~9.4 ms | **~13x faster** |
+| Fragmented wildcards | `?? AD ?? EF ?? FE ?? BE` | ~12.7 ms | **~10x faster** |
+| `scan()` with `fast: true` | any | ~4.3 ms | **~30x faster** |
+| Naive JS loop (baseline) | — | ~128 ms | 1x |
+
+Run it yourself: `bun run bench`
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Installation
 

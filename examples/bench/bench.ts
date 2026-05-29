@@ -2,6 +2,18 @@ import { bench, run } from "mitata";
 import { LRUPatternCache, PatternScanner } from "../../src/index.js";
 import { SIGNATURE, generateBuffer } from "./generate-buffer.js";
 
+// multi-pattern bench helpers — simulate a gamedata.json batch
+const PATTERN_COUNT = 50;
+function makePatterns(count: number, wildcard: boolean): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < count; i++) {
+    out[`sig_${i}`] = wildcard
+      ? `DE AD ?? EF CA ?? BA BE 01 ?? 03 0${(i % 10).toString(16).toUpperCase()}`
+      : `DE AD BE EF CA FE BA BE 01 02 03 0${(i % 10).toString(16).toUpperCase()}`;
+  }
+  return out;
+}
+
 const BUFFER_SIZE = 100 * 1024 * 1024; // 100 MB
 
 console.log(`Generating ${BUFFER_SIZE / 1024 / 1024} MB buffer…`);
@@ -46,5 +58,19 @@ bench("scan() fast:true", () => scanner.scan(NO_WILDCARD, { fast: true }));
 // cache size comparison
 bench("cache: LRU(256) default", () => scanner.findPattern(NO_WILDCARD));
 bench("cache: LRU(1024) custom", () => scannerBigCache.findPattern(NO_WILDCARD));
+
+// multi-pattern API vs manual loop (solid + wildcard, 50 patterns each)
+const solidPatterns    = makePatterns(PATTERN_COUNT, false);
+const wildcardPatterns = makePatterns(PATTERN_COUNT, true);
+
+bench(`findPatterns: ${PATTERN_COUNT} solid`, () => scanner.findPatterns(solidPatterns));
+bench(`N×findPattern: ${PATTERN_COUNT} solid`, () => {
+  for (const p of Object.values(solidPatterns)) scanner.findPattern(p);
+});
+
+bench(`findPatterns: ${PATTERN_COUNT} wildcard`, () => scanner.findPatterns(wildcardPatterns));
+bench(`N×findPattern: ${PATTERN_COUNT} wildcard`, () => {
+  for (const p of Object.values(wildcardPatterns)) scanner.findPattern(p);
+});
 
 await run();

@@ -304,6 +304,67 @@ export class PatternScanner {
       reliable: probeOffsets.length === 1
     };
   }
+
+  /**
+   * Scans for multiple named patterns in a single pass where possible.
+   *
+   * Solid (no-wildcard) patterns are batched into an Aho-Corasick automaton and found
+   * in one pass over the buffer. Wildcard patterns fall back to the optimized
+   * single-pattern path.
+   *
+   * @param patterns Named pattern map — key is any identifier, value is a signature string or `PatternByte[]`.
+   * @param options Scan options applied to all patterns.
+   * @returns Same-keyed record of match offset arrays.
+   *
+   * @example
+   * const offsets = scanner.findPatterns({
+   *   PlayerSpawn: "55 48 89 E5 ?? ?? 48 83 EC",
+   *   WeaponBase:  "48 8B 05 ?? ?? ?? ?? 48 85",
+   * });
+   * offsets["PlayerSpawn"]; // [0x1234]
+   */
+  findPatterns(patterns: Record<string, string | PatternByte[]>, options: ScanOptions = {}): Record<string, number[]> {
+    const keys = Object.keys(patterns);
+    if (keys.length === 0) return {};
+
+    const results: Record<string, number[]> = {};
+    const parsed: Record<string, PatternByte[]> = {};
+
+    for (const key of keys) {
+      const p = patterns[key]!;
+      parsed[key] = typeof p === "string" ? this.getCachedPattern(p) : p;
+      results[key] = [];
+    }
+
+    for (const key of keys) {
+      results[key] = this.findPattern(parsed[key]!, options);
+    }
+
+    return results;
+  }
+
+  /**
+   * Like {@link findPatterns} but returns a full {@link ScanResult} per pattern,
+   * including `found` and `reliable` flags.
+   *
+   * @example
+   * const results = scanner.scanPatterns({
+   *   PlayerSpawn: "55 48 89 E5 ?? ?? 48 83 EC",
+   *   WeaponBase:  "48 8B 05 ?? ?? ?? ?? 48 85",
+   * });
+   * results["PlayerSpawn"]; // { found: true, offsets: [0x1234], reliable: true }
+   */
+  scanPatterns(patterns: Record<string, string | PatternByte[]>, options: ScanOptions = {}): Record<string, ScanResult> {
+    const requestedLimit = options.limit ?? 0;
+    const probeLimit = options.fast ? 2 : requestedLimit > 0 ? Math.max(requestedLimit, 2) : 0;
+    const probeResults = this.findPatterns(patterns, { ...options, limit: probeLimit });
+    const out: Record<string, ScanResult> = {};
+    for (const [key, probeOffsets] of Object.entries(probeResults)) {
+      const offsets = requestedLimit > 0 ? probeOffsets.slice(0, requestedLimit) : probeOffsets;
+      out[key] = { found: offsets.length > 0, offsets, reliable: probeOffsets.length === 1 };
+    }
+    return out;
+  }
 }
 
 /**
@@ -324,4 +385,23 @@ export class PatternScanner {
 export function scan(data: Uint8Array | Buffer, pattern: string | PatternByte[], options: ScanOptions = {}): ScanResult {
   const scanner = new PatternScanner(data);
   return scanner.scan(pattern, options);
+}
+
+/**
+ * Convenient single-use multi-pattern scan. Prefer the class API when scanning
+ * the same buffer multiple times.
+ *
+ * @example
+ * import { scanPatterns } from "sigscan-ts";
+ * const results = scanPatterns(fs.readFileSync("server.so"), {
+ *   PlayerSpawn: "55 48 89 E5 ?? ?? 48 83 EC",
+ *   WeaponBase:  "48 8B 05 ?? ?? ?? ?? 48 85",
+ * });
+ */
+export function findPatterns(data: Uint8Array | Buffer, patterns: Record<string, string | PatternByte[]>, options: ScanOptions = {}): Record<string, number[]> {
+  return new PatternScanner(data).findPatterns(patterns, options);
+}
+
+export function scanPatterns(data: Uint8Array | Buffer, patterns: Record<string, string | PatternByte[]>, options: ScanOptions = {}): Record<string, ScanResult> {
+  return new PatternScanner(data).scanPatterns(patterns, options);
 }

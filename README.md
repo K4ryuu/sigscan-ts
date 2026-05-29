@@ -91,6 +91,37 @@ const offsets = scanner.findPattern("55 48 89 E5");
 console.log("Offsets found:", offsets);
 ```
 
+## Multi-pattern scan
+
+Scan many named signatures in one call — useful for gamedata.json verification or any batch scan:
+
+```typescript
+import { readFileSync } from "fs";
+import { PatternScanner } from "sigscan-ts";
+
+const buffer = readFileSync("server.so");
+const scanner = new PatternScanner(buffer);
+
+// returns Record<name, number[]>
+const offsets = scanner.findPatterns({
+  UTIL_ClientPrintAll: "55 48 89 E5 41 57 4D 89 CF",
+  GiveNamedItem:       "55 48 89 E5 41 57 41 56 41 55",
+  CCSPlayer_Respawn:   "48 8B 05 ?? ?? ?? ?? 48 85",
+});
+
+// returns Record<name, { found, offsets, reliable }>
+const results = scanner.scanPatterns({
+  UTIL_ClientPrintAll: "55 48 89 E5 41 57 4D 89 CF",
+  GiveNamedItem:       "55 48 89 E5 41 57 41 56 41 55",
+});
+
+if (results["GiveNamedItem"].reliable) {
+  console.log("unique match at", results["GiveNamedItem"].offsets[0].toString(16));
+}
+```
+
+Standalone helpers also available: `findPatterns(buffer, patterns)` and `scanPatterns(buffer, patterns)`.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Command Line Interface (CLI)

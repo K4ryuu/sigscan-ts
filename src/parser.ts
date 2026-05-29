@@ -11,8 +11,19 @@ import { PatternByte } from "./types.js";
  * - Raw hex:   "488bc4??53" (splits automatically into 2-char tokens)
  * - Escaped:   "\x48 \x8B \xC4 ? \x53"
  *
- * @param pattern The signature string to parse
- * @returns A parsed array containing byte values (0-255) and nulls for wildcards
+ * @param pattern The signature string to parse.
+ * @returns A parsed array: byte values `0-255` for concrete bytes, `null` for wildcards.
+ * @throws If the pattern contains invalid tokens.
+ *
+ * @example
+ * parsePattern("48 8B C4 ?? 53");
+ * // → [0x48, 0x8B, 0xC4, null, 0x53]
+ *
+ * parsePattern("48.8B.C4.??.53"); // x64dbg dot-separated
+ * // → [0x48, 0x8B, 0xC4, null, 0x53]
+ *
+ * parsePattern("488BC4??53"); // raw hex, no spaces
+ * // → [0x48, 0x8B, 0xC4, null, 0x53]
  */
 export function parsePattern(pattern: string): PatternByte[] {
   if (typeof pattern !== "string") {
@@ -22,12 +33,12 @@ export function parsePattern(pattern: string): PatternByte[] {
 
   // 1. Standardize formatting by replacing common separators with spaces
   let normalized = pattern
-    .replace(/\./g, " ")         // Replace x64dbg dots
-    .replace(/,/g, " ")          // Replace C-style commas
+    .replace(/\./g, " ") // Replace x64dbg dots
+    .replace(/,/g, " ") // Replace C-style commas
     .replace(/[\[\]\{\}]/g, " ") // Strip brackets: [ ], { }
-    .replace(/0x/gi, " ")        // Strip 0x hex prefixes
-    .replace(/\\x/g, " ")        // Strip C-style hex escape prefix
-    .replace(/\\\\/g, " ")       // Clean up backslashes
+    .replace(/0x/gi, " ") // Strip 0x hex prefixes
+    .replace(/\\x/g, " ") // Strip C-style hex escape prefix
+    .replace(/\\\\/g, " ") // Clean up backslashes
     .trim();
 
   // 2. If the user pasted a raw string without spaces, split it into 2-character chunks.

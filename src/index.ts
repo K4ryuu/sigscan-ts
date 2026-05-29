@@ -1,5 +1,6 @@
-export type { PatternByte, ScanOptions, ScanResult } from "./types.js";
+export type { PatternByte, PatternCacheAdapter, ScanOptions, ScanResult } from "./types.js";
 
 export { parsePattern } from "./parser.js";
 
-export { PatternScanner, scan } from "./scanner.js";
+export { LRUPatternCache, PatternScanner, scan } from "./scanner.js";
+export type { PatternScannerOptions } from "./scanner.js";
